@@ -90,6 +90,27 @@ jobs:
           echo "other=$([ "$CAP" = "Release" ] && echo assembleDebug || echo assembleRelease)" >> "$GITHUB_OUTPUT"
           echo "building variant=$V task=assemble$CAP"
 
+      - name: Diagnose workspace and build files
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          set -x
+          pwd
+          ls -la
+          ls -la main
+          ls -la main/meta
+          find . -maxdepth 3 \( -name 'build.gradle*' -o -name 'settings.gradle*' -o -name 'libs.versions.toml' \) -printf '%s\t%p\n'
+          md5sum build.gradle.kts settings.gradle.kts main/build.gradle.kts gradle/libs.versions.toml gradle.properties
+          git -C "$GITHUB_WORKSPACE" status --porcelain -- "$GITHUB_WORKSPACE/$PLUGIN_DIR" | head -20 || true
+          git -C "$GITHUB_WORKSPACE" ls-files -s -- "$PLUGIN_DIR" | head -50
+          echo '--- main/build.gradle.kts (first 40 lines) ---'
+          sed -n '1,40p' main/build.gradle.kts
+          echo '--- :main:properties ---'
+          ./gradlew --no-daemon -q :main:properties 2>&1 | grep -iE 'buildFile|projectDir|name:|plugins' | head -20 || true
+          echo '--- :main:buildEnvironment ---'
+          ./gradlew --no-daemon -q :main:buildEnvironment 2>&1 | head -40 || true
+          echo '--- root buildEnvironment ---'
+          ./gradlew --no-daemon -q buildEnvironment 2>&1 | head -40 || true
+
       - name: Build plugin (.acp)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |

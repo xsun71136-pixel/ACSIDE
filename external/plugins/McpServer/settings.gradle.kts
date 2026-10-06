@@ -21,4 +21,11 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "McpServer"
+
+// Pin the module explicitly. Without this Gradle silently treated ":main" as an
+// empty project in CI (":main:buildEnvironment" reported "classpath: No
+// dependencies" and assemble* did not exist), i.e. main/build.gradle.kts was
+// never applied.
 include(":main")
+project(":main").projectDir = file("main")
+project(":main").buildFileName = "build.gradle.kts"
