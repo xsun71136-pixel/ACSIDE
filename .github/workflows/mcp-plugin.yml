@@ -73,9 +73,10 @@ jobs:
           "$SM" --list_installed || true
           ls -1 "$SDK/build-tools" || true
 
-      - name: Set up Gradle (cache only)
+      - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
+          gradle-version: '8.13'
           cache-read-only: false
 
       - name: Resolve build variant
@@ -94,11 +95,20 @@ jobs:
         run: |
           set -x
           chmod +x ./gradlew || true
-          ./gradlew --version
+          # Use the wrapper only when its jar is a real zip; otherwise fall back to
+          # the Gradle CLI installed by gradle/actions/setup-gradle.
+          if head -c 2 gradle/wrapper/gradle-wrapper.jar 2>/dev/null | grep -q 'PK'; then
+            LAUNCH="./gradlew"
+          else
+            echo "::warning::gradle-wrapper.jar is not a valid zip, falling back to the gradle CLI"
+            LAUNCH="gradle"
+          fi
+          echo "launcher=$LAUNCH"
+          $LAUNCH --version
           TASK="${{ steps.variant.outputs.task }}"
-          ./gradlew --no-daemon --stacktrace --warning-mode=all ":main:$TASK" || {
+          $LAUNCH --no-daemon --stacktrace --warning-mode=all ":main:$TASK" || {
             echo "::warning::${TASK} failed, retrying with ${{ steps.variant.outputs.other }}"
-            ./gradlew --no-daemon --stacktrace ":main:${{ steps.variant.outputs.other }}"
+            $LAUNCH --no-daemon --stacktrace ":main:${{ steps.variant.outputs.other }}"
           }
           find . -type f \( -name '*.acp' -o -name '*.apk' \) -printf '%s\t%p\n' || true
 
