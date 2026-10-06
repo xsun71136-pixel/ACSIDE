@@ -40,7 +40,7 @@ jobs:
   build:
     name: Build McpServer.acp
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,20 +51,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
-
-      - name: Install SDK components
+      # The ubuntu-latest runner image already ships the Android SDK
+      # (/usr/local/lib/android/sdk + cmdline-tools). android-actions/setup-android
+      # is deliberately NOT used: it tries to install the removed legacy "tools"
+      # package and dies with "sdkmanager failed with exit code 1".
+      - name: Prepare Android SDK
         run: |
           set -x
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0" >/dev/null
-          sdkmanager --list_installed 2>/dev/null | head -30 || true
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SM" ]; then
+            SM="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          fi
+          echo "sdkmanager=$SM"
+          test -x "$SM"
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+          test -f "$SDK/platforms/android-36/android.jar" || { echo "::error::platforms;android-36 missing"; exit 1; }
+          "$SM" --list_installed || true
+          ls -1 "$SDK/build-tools" || true
+
+      - name: Set up Gradle (cache only)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Resolve build variant
         id: variant
@@ -74,18 +86,21 @@ jobs:
           CAP="$(printf '%s' "${V:0:1}" | tr '[:lower:]' '[:upper:]')${V:1}"
           echo "variant=$V" >> "$GITHUB_OUTPUT"
           echo "task=assemble$CAP" >> "$GITHUB_OUTPUT"
+          echo "other=$([ "$CAP" = "Release" ] && echo assembleDebug || echo assembleRelease)" >> "$GITHUB_OUTPUT"
           echo "building variant=$V task=assemble$CAP"
 
-      - name: Build plugin
+      - name: Build plugin (.acp)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
           set -x
+          chmod +x ./gradlew || true
+          ./gradlew --version
           TASK="${{ steps.variant.outputs.task }}"
-          gradle --no-daemon --stacktrace ":main:$TASK" || {
-            echo "::warning::${TASK} failed, retrying with the other variant"
-            if [ "$TASK" = "assembleRelease" ]; then OTHER=assembleDebug; else OTHER=assembleRelease; fi
-            gradle --no-daemon --stacktrace ":main:$OTHER"
+          ./gradlew --no-daemon --stacktrace --warning-mode=all ":main:$TASK" || {
+            echo "::warning::${TASK} failed, retrying with ${{ steps.variant.outputs.other }}"
+            ./gradlew --no-daemon --stacktrace ":main:${{ steps.variant.outputs.other }}"
           }
+          find . -type f \( -name '*.acp' -o -name '*.apk' \) -printf '%s\t%p\n' || true
 
       - name: Locate and verify the .acp
         id: acp
@@ -105,16 +120,16 @@ jobs:
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "sha256=$SUM" >> "$GITHUB_OUTPUT"
           echo "magic=$MAGIC" >> "$GITHUB_OUTPUT"
-          echo "artifact: $PLUGIN_NAME.acp size=$SIZE sha256=$SUM magic='$MAGIC'"
+          echo "artifact=$PLUGIN_NAME.acp size=$SIZE sha256=$SUM magic='$MAGIC'"
           case "$MAGIC" in
-            ACSPluginBasedSystem-1.0) echo "magic OK" ;;
+            ACSPluginBasedSystem-1.0) echo "container magic OK" ;;
             *) echo "::warning::unexpected .acp magic '$MAGIC' (expected ACSPluginBasedSystem-1.0)" ;;
           esac
 
       - name: Also expose the raw plugin apk
         run: |
-          APK="$(find "$PLUGIN_DIR/main/build/outputs/apk" -type f -name '*.apk' -print -quit || true)"
-          if [ -n "$APK" ]; then cp "$APK" plugin.apk; echo "apk=$APK"; else echo "no apk found"; fi
+          APK="$(find "$PLUGIN_DIR/main/build/outputs/apk" -type f -name '*.apk' -print -quit 2>/dev/null || true)"
+          if [ -n "$APK" ]; then cp "$APK" plugin.apk; echo "apk=$APK size=$(stat -c %s plugin.apk)"; else echo "no apk found"; fi
 
       - name: Collect metadata
         run: |
@@ -139,11 +154,12 @@ jobs:
           name: McpServer-acp
           path: |
             McpServer.acp
+            plugin.apk
             repository.json
             plugin.json
             actions.json
             BUILD_INFO.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
 
       - name: Publish GitHub Release
@@ -163,11 +179,10 @@ jobs:
           - container magic: ${{ steps.acp.outputs.magic }}
           - commit: ${GITHUB_SHA}
 
-          Install inside ACSIDE: 设置 → 插件 → 从本地安装，选择 McpServer.acp。
+          安装：ACSIDE → 设置 → 插件 → 从本地安装，选择 McpServer.acp。
           安装后打开任意项目文件，「输出与调试 · MCP 服务器」面板会自动出现。"
           gh release create "$TAG" McpServer.acp BUILD_INFO.txt repository.json \
             --title "MCP Server plugin v${VERSION}" \
             --notes "$NOTES" \
-            --latest || {
-              gh release upload "$TAG" McpServer.acp BUILD_INFO.txt repository.json --clobber
-            }
+            --latest || \
+          gh release upload "$TAG" McpServer.acp BUILD_INFO.txt repository.json --clobber
