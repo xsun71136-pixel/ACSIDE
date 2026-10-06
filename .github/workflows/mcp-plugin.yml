@@ -105,11 +105,22 @@ jobs:
           fi
           echo "launcher=$LAUNCH"
           $LAUNCH --version
+          # Diagnostics: prove the :main project is configured and show the real
+          # task names the Android/ACSIDE plugins registered.
+          $LAUNCH --no-daemon projects || true
+          $LAUNCH --no-daemon :main:tasks --all || true
           TASK="${{ steps.variant.outputs.task }}"
-          $LAUNCH --no-daemon --stacktrace --warning-mode=all ":main:$TASK" || {
-            echo "::warning::${TASK} failed, retrying with ${{ steps.variant.outputs.other }}"
-            $LAUNCH --no-daemon --stacktrace ":main:${{ steps.variant.outputs.other }}"
-          }
+          OK=""
+          for CANDIDATE in ":main:$TASK" ":main:${{ steps.variant.outputs.other }}" ":main:assemble" ":main:build"; do
+            echo "----- trying $CANDIDATE -----"
+            if $LAUNCH --no-daemon --stacktrace "$CANDIDATE"; then OK="$CANDIDATE"; break; fi
+            echo "::warning::$CANDIDATE failed"
+          done
+          if [ -z "$OK" ]; then
+            echo "::error::every Gradle task candidate failed"
+            exit 1
+          fi
+          echo "built with $OK" 
           find . -type f \( -name '*.acp' -o -name '*.apk' \) -printf '%s\t%p\n' || true
 
       - name: Locate and verify the .acp
