@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+# built plugin archive is published by CI as a workflow artifact / release asset
+*.acp

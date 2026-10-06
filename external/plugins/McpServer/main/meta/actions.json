@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "actions": [
+    {
+      "id": "action_acs_mcp_server",
+      "type": "plugin_action",
+      "title": "MCP 服务器 (输出与调试)",
+      "description": "启动/管理 ACS 内置 MCP 服务器，并在「输出与调试」面板中显示实时日志与独立设置页",
+      "iconName": "Code",
+      "showIn": ["onEditorActivityLaunched"],
+      "priority": 40,
+      "pluginConfig": {
+        "pluginPath": "McpServer/plugin.apk",
+        "className": "io.github.xsun71136.plugins.mcp.McpServerPlugin",
+        "methodName": "setContext",
+        "methodType": "static"
+      }
+    }
+  ]
+}

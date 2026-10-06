@@ -1,0 +1,173 @@
+name: ACS MCP Plugin
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'external/plugins/McpServer/**'
+      - '.github/workflows/mcp-plugin.yml'
+  pull_request:
+    paths:
+      - 'external/plugins/McpServer/**'
+      - '.github/workflows/mcp-plugin.yml'
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Build variant'
+        required: false
+        default: 'release'
+        type: choice
+        options: [ release, debug ]
+      publish:
+        description: 'Attach McpServer.acp to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+  create:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: acs-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLUGIN_DIR: external/plugins/McpServer
+  PLUGIN_NAME: McpServer
+
+jobs:
+  build:
+    name: Build McpServer.acp
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Install SDK components
+        run: |
+          set -x
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0" >/dev/null
+          sdkmanager --list_installed 2>/dev/null | head -30 || true
+
+      - name: Resolve build variant
+        id: variant
+        run: |
+          V="${{ github.event.inputs.variant }}"
+          [ -z "$V" ] && V=release
+          CAP="$(printf '%s' "${V:0:1}" | tr '[:lower:]' '[:upper:]')${V:1}"
+          echo "variant=$V" >> "$GITHUB_OUTPUT"
+          echo "task=assemble$CAP" >> "$GITHUB_OUTPUT"
+          echo "building variant=$V task=assemble$CAP"
+
+      - name: Build plugin
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          set -x
+          TASK="${{ steps.variant.outputs.task }}"
+          gradle --no-daemon --stacktrace ":main:$TASK" || {
+            echo "::warning::${TASK} failed, retrying with the other variant"
+            if [ "$TASK" = "assembleRelease" ]; then OTHER=assembleDebug; else OTHER=assembleRelease; fi
+            gradle --no-daemon --stacktrace ":main:$OTHER"
+          }
+
+      - name: Locate and verify the .acp
+        id: acp
+        run: |
+          set -x
+          ACP="$(find "$PLUGIN_DIR" -type f -name '*.acp' -print -quit)"
+          if [ -z "$ACP" ]; then
+            echo "::error::no .acp was produced by the build"
+            find "$PLUGIN_DIR" -type f \( -name '*.apk' -o -name '*.acp' \) -printf '%p\n' || true
+            exit 1
+          fi
+          cp "$ACP" "$PLUGIN_NAME.acp"
+          SIZE=$(stat -c %s "$PLUGIN_NAME.acp")
+          SUM=$(sha256sum "$PLUGIN_NAME.acp" | awk '{print $1}')
+          MAGIC=$(head -c 24 "$PLUGIN_NAME.acp" | tr -d '\0')
+          echo "path=$PLUGIN_NAME.acp" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SUM" >> "$GITHUB_OUTPUT"
+          echo "magic=$MAGIC" >> "$GITHUB_OUTPUT"
+          echo "artifact: $PLUGIN_NAME.acp size=$SIZE sha256=$SUM magic='$MAGIC'"
+          case "$MAGIC" in
+            ACSPluginBasedSystem-1.0) echo "magic OK" ;;
+            *) echo "::warning::unexpected .acp magic '$MAGIC' (expected ACSPluginBasedSystem-1.0)" ;;
+          esac
+
+      - name: Also expose the raw plugin apk
+        run: |
+          APK="$(find "$PLUGIN_DIR/main/build/outputs/apk" -type f -name '*.apk' -print -quit || true)"
+          if [ -n "$APK" ]; then cp "$APK" plugin.apk; echo "apk=$APK"; else echo "no apk found"; fi
+
+      - name: Collect metadata
+        run: |
+          {
+            echo "plugin=McpServer"
+            echo "version=$(sed -n 's/.*"version"[^"]*"\([^"]*\)".*/\1/p' "$PLUGIN_DIR/main/meta/plugin.json" | head -1)"
+            echo "size=${{ steps.acp.outputs.size }}"
+            echo "sha256=${{ steps.acp.outputs.sha256 }}"
+            echo "magic=${{ steps.acp.outputs.magic }}"
+            echo "commit=${GITHUB_SHA}"
+            echo "run=${GITHUB_RUN_ID}"
+            echo "builtAt=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          } > BUILD_INFO.txt
+          cp "$PLUGIN_DIR/repository.json" repository.json
+          cp "$PLUGIN_DIR/main/meta/plugin.json" plugin.json
+          cp "$PLUGIN_DIR/main/meta/actions.json" actions.json
+          cat BUILD_INFO.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: McpServer-acp
+          path: |
+            McpServer.acp
+            repository.json
+            plugin.json
+            actions.json
+            BUILD_INFO.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -x
+          VERSION="$(sed -n 's/^version=//p' BUILD_INFO.txt)"
+          TAG="mcp-v${VERSION}-${GITHUB_RUN_NUMBER}"
+          NOTES="Android Code Studio MCP Server plugin.
+
+          - artifact: McpServer.acp
+          - version: ${VERSION}
+          - size: ${{ steps.acp.outputs.size }} bytes
+          - sha256: ${{ steps.acp.outputs.sha256 }}
+          - container magic: ${{ steps.acp.outputs.magic }}
+          - commit: ${GITHUB_SHA}
+
+          Install inside ACSIDE: 设置 → 插件 → 从本地安装，选择 McpServer.acp。
+          安装后打开任意项目文件，「输出与调试 · MCP 服务器」面板会自动出现。"
+          gh release create "$TAG" McpServer.acp BUILD_INFO.txt repository.json \
+            --title "MCP Server plugin v${VERSION}" \
+            --notes "$NOTES" \
+            --latest || {
+              gh release upload "$TAG" McpServer.acp BUILD_INFO.txt repository.json --clobber
+            }

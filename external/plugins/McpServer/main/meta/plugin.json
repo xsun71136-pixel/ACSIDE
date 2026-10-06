@@ -1,0 +1,9 @@
+{
+  "name": "McpServer",
+  "displayName": "MCP 服务器 (输出与调试)",
+  "description": "在 Android Code Studio 内部启动一个 Model Context Protocol (MCP) 服务器，把整个 IDE 与当前项目软件的能力（项目/文件/Gradle 构建/安装运行/logcat/终端/编辑器/LSP/环境）以 MCP 工具形式暴露给外部 AI 客户端。面板挂在「输出与调试」，并带有独立的 MCP 设置页。",
+  "version": "1.0",
+  "author": "xsun71136-pixel",
+  "icon": "icon.png",
+  "enabled": true
+}

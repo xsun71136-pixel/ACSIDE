@@ -1,0 +1,23 @@
+{
+  "id": "io.github.xsun71136.plugins.mcp",
+  "name": "McpServer",
+  "displayName": "MCP 服务器 (输出与调试)",
+  "description": "Runs a Model Context Protocol server inside Android Code Studio and exposes the whole IDE plus the open project (files, Gradle build, install/run, logcat, terminal, editor, LSP, environment) as MCP tools. Panel lives in Output & Debugging with its own settings page.",
+  "category": "Development Tools",
+  "author": "xsun71136-pixel",
+  "homepage": "https://github.com/xsun71136-pixel/ACSIDE/tree/main/external/plugins/McpServer",
+  "iconUrl": "https://raw.githubusercontent.com/xsun71136-pixel/ACSIDE/refs/heads/main/external/plugins/McpServer/main/meta/icon.png",
+  "latestVersion": "1.0",
+  "minAcsVersion": "1.0.0",
+  "downloadUrl": "https://github.com/xsun71136-pixel/ACSIDE/releases/latest/download/McpServer.acp",
+  "checksum": "",
+  "size": 0,
+  "lastUpdated": "",
+  "tags": [
+    "mcp",
+    "ai",
+    "automation",
+    "development",
+    "output_debug"
+  ]
+}
